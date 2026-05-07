@@ -69,8 +69,8 @@ Nel file `.env` puoi scegliere il modello Gemini da usare tramite la variabile `
 GEMINI_MODEL=gemini-2.5-flash
 ```
 
-Se non la imposti, verrà usato `gemini-1.5-flash` come default.  
-Modelli disponibili: `gemini-1.5-flash`, `gemini-1.5-pro`, `gemini-2.5-flash`, `gemini-2.5-pro` — lista completa su https://ai.google.dev/gemini-api/docs/models
+Se non la imposti, verrà usato `gemini-2.5-flash` come default con fallback automatico su `gemini-2.0-flash` e `gemini-2.0-flash-lite` in caso di indisponibilità temporanea del servizio o modello non disponibile.  
+Modelli disponibili consigliati: `gemini-2.5-flash`, `gemini-2.0-flash`, `gemini-2.0-flash-lite` — lista completa su https://ai.google.dev/gemini-api/docs/models
 
 ### 5. Installa le dipendenze
 
