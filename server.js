@@ -9,6 +9,7 @@ const API_KEY = process.env.GEMINI_API_KEY;
 const DEFAULT_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite"];
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 const MAX_RETRIES_PER_MODEL = Number(process.env.GEMINI_MAX_RETRIES_PER_MODEL || 2);
+const MAX_ATTEMPTS_PER_MODEL = MAX_RETRIES_PER_MODEL + 1;
 const INITIAL_RETRY_DELAY_MS = Number(process.env.GEMINI_INITIAL_RETRY_DELAY_MS || 1000);
 
 if (!API_KEY) {
@@ -66,7 +67,7 @@ async function generateResponse({ history, message }) {
   let lastError;
 
   for (const modelName of modelsToTry) {
-    for (let attempt = 0; attempt <= MAX_RETRIES_PER_MODEL; attempt += 1) {
+    for (let attempt = 0; attempt < MAX_ATTEMPTS_PER_MODEL; attempt += 1) {
       try {
         const model = genAI.getGenerativeModel({ model: modelName });
         const chat = model.startChat({
