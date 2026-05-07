@@ -17,45 +17,89 @@ Web app che funge da proxy a Google Gemini, progettata per essere **completament
 
 ## Requisiti
 
-- [Docker](https://docs.docker.com/get-docker/) e [Docker Compose](https://docs.docker.com/compose/)
+- [Node.js](https://nodejs.org/) versione 18 o superiore
+- [PM2](https://pm2.keymetrics.io/) (process manager — mantiene l'app attiva e la riavvia al boot)
 - Una chiave API di Google Gemini (gratuita): https://aistudio.google.com/app/apikey
 
 ---
 
 ## Installazione sul NAS
 
-### 1. Copia i file
+### 1. Verifica Node.js
 
-Copia l'intera cartella del progetto sul tuo NAS (via SSH, Samba, ecc.).
+Connettiti al NAS via SSH e verifica che Node.js sia installato:
 
-### 2. Configura la chiave API
+```bash
+node -v   # deve essere >= 18
+npm -v
+```
+
+Se non è installato, usa il gestore pacchetti del tuo NAS (es. Entware/opkg, Synology Package Center, ecc.) oppure installa [nvm](https://github.com/nvm-sh/nvm):
+
+```bash
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+source ~/.bashrc
+nvm install 20
+```
+
+### 2. Installa PM2 globalmente
+
+```bash
+npm install -g pm2
+```
+
+### 3. Copia i file sul NAS
+
+Copia l'intera cartella del progetto sul NAS (via SSH, rsync, Samba, ecc.), poi entra nella directory:
+
+```bash
+cd /percorso/geminip
+```
+
+### 4. Configura la chiave API
 
 ```bash
 cp .env.example .env
-# Modifica .env e inserisci la tua GEMINI_API_KEY
-nano .env
+nano .env          # inserisci la tua GEMINI_API_KEY
 ```
 
-### 3. Avvia con Docker Compose
+### 5. Installa le dipendenze
 
 ```bash
-docker compose up -d
+npm install --omit=dev
+```
+
+### 6. Avvia con PM2
+
+```bash
+pm2 start ecosystem.config.cjs
 ```
 
 L'app sarà disponibile su `http://<IP-del-NAS>:3000`
 
-### Fermare il servizio
+### 7. Avvio automatico al riavvio del NAS
 
 ```bash
-docker compose down
+pm2 save                  # salva la lista dei processi
+pm2 startup               # mostra il comando da eseguire per abilitare l'autostart
+# esegui il comando suggerito da pm2 startup (di solito inizia con sudo env ...)
+```
+
+### Comandi utili PM2
+
+```bash
+pm2 status                # stato dell'app
+pm2 logs geminip          # log in tempo reale
+pm2 restart geminip       # riavvia
+pm2 stop geminip          # ferma
+pm2 delete geminip        # rimuove dal processo manager
 ```
 
 ---
 
-## Avvio locale (senza Docker)
+## Avvio rapido (senza PM2, solo per test)
 
 ```bash
-# Requisiti: Node.js 18+
 cp .env.example .env
 # Modifica .env con la tua chiave API
 npm install
@@ -82,11 +126,10 @@ L'interfaccia è stata progettata per utenti che usano JAWS o altri screen reade
 ```
 geminip/
 ├── public/
-│   └── index.html        # Frontend accessibile
-├── server.js             # Backend Express (proxy Gemini)
+│   └── index.html          # Frontend accessibile
+├── server.js               # Backend Express (proxy Gemini)
+├── ecosystem.config.cjs    # Configurazione PM2
 ├── package.json
-├── Dockerfile
-├── docker-compose.yml
 ├── .env.example
 └── .gitignore
 ```
