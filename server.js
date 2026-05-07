@@ -2,6 +2,8 @@ require("dotenv").config();
 const express = require("express");
 const multer = require("multer");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
+const mammoth = require("mammoth");
+const ExcelJS = require("exceljs");
 const path = require("path");
 
 const app = express();
@@ -18,6 +20,10 @@ const ALLOWED_MIME_TYPES = new Set([
   "application/pdf",
   "text/plain",
   "text/csv",
+  // Word (modern format – converted server-side to plain text)
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  // Excel (modern format – converted server-side to plain text)
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   "audio/mpeg",
   "audio/wav",
   "audio/ogg",
@@ -101,24 +107,68 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// MIME types that must be converted to plain text server-side before being
+// sent to Gemini (the API rejects them as inlineData otherwise).
+const CONVERT_TO_TEXT_MIME_TYPES = new Set([
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+]);
+
+async function extractWordText(buffer) {
+  const result = await mammoth.extractRawText({ buffer });
+  return result.value;
+}
+
+async function extractExcelText(buffer) {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
+  const lines = [];
+  workbook.eachSheet((sheet) => {
+    lines.push(`Sheet: ${sheet.name}`);
+    sheet.eachRow((row) => {
+      const values = row.values
+        .slice(1)
+        .map((v) => (v === null || v === undefined ? "" : String(v)));
+      lines.push(values.join("\t"));
+    });
+    lines.push("");
+  });
+  return lines.join("\n");
+}
+
 /**
  * Build Gemini parts for the current user turn.
  * @param {string} message
  * @param {Express.Multer.File[]} files
- * @returns {Array}
+ * @returns {Promise<Array>}
  */
-function buildMessageParts(message, files) {
+async function buildMessageParts(message, files) {
   const parts = [];
   if (message && message.trim()) {
     parts.push({ text: message.trim() });
   }
   for (const file of files) {
-    parts.push({
-      inlineData: {
-        mimeType: file.mimetype,
-        data: file.buffer.toString("base64"),
-      },
-    });
+    if (CONVERT_TO_TEXT_MIME_TYPES.has(file.mimetype)) {
+      let extractedText;
+      if (
+        file.mimetype ===
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      ) {
+        extractedText = await extractWordText(file.buffer);
+      } else {
+        extractedText = await extractExcelText(file.buffer);
+      }
+      parts.push({
+        text: `--- Inizio file: ${file.originalname} ---\n${extractedText}\n--- Fine file: ${file.originalname} ---`,
+      });
+    } else {
+      parts.push({
+        inlineData: {
+          mimeType: file.mimetype,
+          data: file.buffer.toString("base64"),
+        },
+      });
+    }
   }
   return parts;
 }
@@ -138,7 +188,7 @@ async function generateResponse({ history, message, files = [] }) {
           })),
         });
 
-        const messageParts = buildMessageParts(message, files);
+        const messageParts = await buildMessageParts(message, files);
         const result = await chat.sendMessage(messageParts);
         return result.response.text();
       } catch (err) {
