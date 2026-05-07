@@ -18,12 +18,6 @@ const ALLOWED_MIME_TYPES = new Set([
   "application/pdf",
   "text/plain",
   "text/csv",
-  // Excel
-  "application/vnd.ms-excel",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  // Word
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "audio/mpeg",
   "audio/wav",
   "audio/ogg",
