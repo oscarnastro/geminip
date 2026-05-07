@@ -4,7 +4,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const path = require("path");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3004;
 const API_KEY = process.env.GEMINI_API_KEY;
 function parseNonNegativeInteger(value, fallback) {
   const parsed = Number.parseInt(value, 10);
