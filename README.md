@@ -56,12 +56,21 @@ Copia l'intera cartella del progetto sul NAS (via SSH, rsync, Samba, ecc.), poi 
 cd /percorso/geminip
 ```
 
-### 4. Configura la chiave API
+### 4. Configura la chiave API e il modello
 
 ```bash
 cp .env.example .env
-nano .env          # inserisci la tua GEMINI_API_KEY
+nano .env          # inserisci la tua GEMINI_API_KEY e, facoltativamente, GEMINI_MODEL
 ```
+
+Nel file `.env` puoi scegliere il modello Gemini da usare tramite la variabile `GEMINI_MODEL`:
+
+```
+GEMINI_MODEL=gemini-2.5-flash
+```
+
+Se non la imposti, verrà usato `gemini-1.5-flash` come default.  
+Modelli disponibili: `gemini-1.5-flash`, `gemini-1.5-pro`, `gemini-2.5-flash`, `gemini-2.5-pro` — lista completa su https://ai.google.dev/gemini-api/docs/models
 
 ### 5. Installa le dipendenze
 
