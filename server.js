@@ -28,7 +28,7 @@ app.post("/api/chat", async (req, res) => {
   }
 
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = genAI.getGenerativeModel({ model: process.env.GEMINI_MODEL || "gemini-1.5-flash" });
 
     const chat = model.startChat({
       history: history.map((turn) => ({
