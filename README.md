@@ -1,40 +1,40 @@
-# GeminiP – Proxy accessibile per Google Gemini
+# GeminiP – Accessible Proxy for Google Gemini
 
-Web app che funge da proxy a Google Gemini, progettata per essere **completamente accessibile con screen reader JAWS** e semplice da installare su un NAS tramite Docker.
-
----
-
-## Funzionalità
-
-- Interfaccia di chat accessibile con ARIA live regions, skip link, focus management
-- Navigazione completa da tastiera (Tab, Invio per inviare, Shift+Invio per andare a capo)
-- Bottone "Copia ultima risposta" per copiare il testo negli appunti
-- Bottone "Nuova conversazione" per resettare la chat
-- Memoria della conversazione nella sessione (contesto inviato a Gemini)
-- Deploy semplice con Docker / Docker Compose
+A web app that acts as a proxy for Google Gemini, designed to be **fully accessible with the JAWS screen reader** and easy to install on a NAS via Docker.
 
 ---
 
-## Requisiti
+## Features
 
-- [Node.js](https://nodejs.org/) versione 18 o superiore
-- [PM2](https://pm2.keymetrics.io/) (process manager — mantiene l'app attiva e la riavvia al boot)
-- Una chiave API di Google Gemini (gratuita): https://aistudio.google.com/app/apikey
+- Accessible chat interface with ARIA live regions, skip link, and focus management
+- Full keyboard navigation (Tab, Enter to send, Shift+Enter for a new line)
+- "Copy last response" button to copy text to the clipboard
+- "New conversation" button to reset the chat
+- Conversation memory within the session (context sent to Gemini)
+- Simple deployment with Docker / Docker Compose
 
 ---
 
-## Installazione sul NAS
+## Requirements
 
-### 1. Verifica Node.js
+- [Node.js](https://nodejs.org/) version 18 or higher
+- [PM2](https://pm2.keymetrics.io/) (process manager — keeps the app alive and restarts it on boot)
+- A Google Gemini API key (free): https://aistudio.google.com/app/apikey
 
-Connettiti al NAS via SSH e verifica che Node.js sia installato:
+---
+
+## NAS Installation
+
+### 1. Check Node.js
+
+Connect to the NAS via SSH and verify that Node.js is installed:
 
 ```bash
-node -v   # deve essere >= 18
+node -v   # must be >= 18
 npm -v
 ```
 
-Se non è installato, usa il gestore pacchetti del tuo NAS (es. Entware/opkg, Synology Package Center, ecc.) oppure installa [nvm](https://github.com/nvm-sh/nvm):
+If it is not installed, use your NAS package manager (e.g. Entware/opkg, Synology Package Center, etc.) or install [nvm](https://github.com/nvm-sh/nvm):
 
 ```bash
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
@@ -42,102 +42,102 @@ source ~/.bashrc
 nvm install 20
 ```
 
-### 2. Installa PM2 globalmente
+### 2. Install PM2 globally
 
 ```bash
 npm install -g pm2
 ```
 
-### 3. Copia i file sul NAS
+### 3. Copy the files to the NAS
 
-Copia l'intera cartella del progetto sul NAS (via SSH, rsync, Samba, ecc.), poi entra nella directory:
+Copy the entire project folder to the NAS (via SSH, rsync, Samba, etc.), then enter the directory:
 
 ```bash
-cd /percorso/geminip
+cd /path/to/geminip
 ```
 
-### 4. Configura la chiave API e il modello
+### 4. Configure the API key and model
 
 ```bash
 cp .env.example .env
-nano .env          # inserisci la tua GEMINI_API_KEY e, facoltativamente, GEMINI_MODEL
+nano .env          # enter your GEMINI_API_KEY and, optionally, GEMINI_MODEL
 ```
 
-Nel file `.env` puoi scegliere il modello Gemini da usare tramite la variabile `GEMINI_MODEL`:
+In the `.env` file you can choose the Gemini model to use via the `GEMINI_MODEL` variable:
 
 ```
 GEMINI_MODEL=gemini-2.5-flash
 ```
 
-Se non la imposti, verrà usato `gemini-2.5-flash` come default con fallback automatico su `gemini-2.0-flash` e `gemini-2.0-flash-lite` in caso di indisponibilità temporanea del servizio o modello non disponibile.  
-Modelli disponibili consigliati: `gemini-2.5-flash`, `gemini-2.0-flash`, `gemini-2.0-flash-lite` — lista completa su https://ai.google.dev/gemini-api/docs/models
+If not set, `gemini-2.5-flash` will be used as the default with automatic fallback to `gemini-2.0-flash` and `gemini-2.0-flash-lite` in case of temporary service unavailability or model not available.  
+Recommended available models: `gemini-2.5-flash`, `gemini-2.0-flash`, `gemini-2.0-flash-lite` — full list at https://ai.google.dev/gemini-api/docs/models
 
-### 5. Installa le dipendenze
+### 5. Install dependencies
 
 ```bash
 npm install --omit=dev
 ```
 
-### 6. Avvia con PM2
+### 6. Start with PM2
 
 ```bash
 pm2 start ecosystem.config.cjs
 ```
 
-L'app sarà disponibile su `http://<IP-del-NAS>:3000`
+The app will be available at `http://<NAS-IP>:3000`
 
-### 7. Avvio automatico al riavvio del NAS
+### 7. Auto-start on NAS reboot
 
 ```bash
-pm2 save                  # salva la lista dei processi
-pm2 startup               # mostra il comando da eseguire per abilitare l'autostart
-# esegui il comando suggerito da pm2 startup (di solito inizia con sudo env ...)
+pm2 save                  # saves the process list
+pm2 startup               # shows the command to run to enable autostart
+# run the command suggested by pm2 startup (usually starts with sudo env ...)
 ```
 
-### Comandi utili PM2
+### Useful PM2 commands
 
 ```bash
-pm2 status                # stato dell'app
-pm2 logs geminip          # log in tempo reale
-pm2 restart geminip       # riavvia
-pm2 stop geminip          # ferma
-pm2 delete geminip        # rimuove dal processo manager
+pm2 status                # app status
+pm2 logs geminip          # real-time logs
+pm2 restart geminip       # restart
+pm2 stop geminip          # stop
+pm2 delete geminip        # remove from process manager
 ```
 
 ---
 
-## Avvio rapido (senza PM2, solo per test)
+## Quick start (without PM2, for testing only)
 
 ```bash
 cp .env.example .env
-# Modifica .env con la tua chiave API
+# Edit .env with your API key
 npm install
 npm start
 ```
 
 ---
 
-## Note sull'accessibilità
+## Accessibility notes
 
-L'interfaccia è stata progettata per utenti che usano JAWS o altri screen reader:
+The interface has been designed for users who use JAWS or other screen readers:
 
-- **Skip link** "Vai al campo di testo" all'inizio della pagina
-- La lista dei messaggi ha `aria-live="polite"` — JAWS annuncia ogni nuova risposta automaticamente
-- Il campo di stato sotto la chat (`role="status"`) annuncia l'avanzamento (invio, risposta ricevuta, errori)
-- Tutti i controlli sono raggiungibili con **Tab** e attivabili con **Invio** o **Spazio**
-- Per inviare un messaggio: scrivi nel campo di testo e premi **Invio** (Shift+Invio per andare a capo)
-- Struttura heading chiara: `<h1>` nel header, sezioni con `aria-label`
+- **Skip link** "Go to text field" at the top of the page
+- The message list has `aria-live="polite"` — JAWS automatically announces each new response
+- The status field below the chat (`role="status"`) announces progress (sending, response received, errors)
+- All controls are reachable with **Tab** and activatable with **Enter** or **Space**
+- To send a message: type in the text field and press **Enter** (Shift+Enter for a new line)
+- Clear heading structure: `<h1>` in the header, sections with `aria-label`
 
 ---
 
-## Struttura del progetto
+## Project structure
 
 ```
 geminip/
 ├── public/
-│   └── index.html          # Frontend accessibile
-├── server.js               # Backend Express (proxy Gemini)
-├── ecosystem.config.cjs    # Configurazione PM2
+│   └── index.html          # Accessible frontend
+├── server.js               # Express backend (Gemini proxy)
+├── ecosystem.config.cjs    # PM2 configuration
 ├── package.json
 ├── .env.example
 └── .gitignore
@@ -145,7 +145,7 @@ geminip/
 
 ---
 
-## Sicurezza
+## Security
 
-- La chiave API non è mai esposta al browser; tutte le chiamate a Gemini avvengono lato server
-- L'app non memorizza messaggi su disco
+- The API key is never exposed to the browser; all calls to Gemini happen server-side
+- The app does not store messages on disk
