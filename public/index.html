@@ -187,6 +187,57 @@
       cursor: not-allowed;
     }
 
+    /* ---- File upload ---- */
+    .file-btn {
+      padding: 0.4rem 0.9rem;
+      font-size: 1rem;
+      border: 2px solid #005fcc;
+      border-radius: 4px;
+      background: #fff;
+      color: #005fcc;
+      cursor: pointer;
+    }
+    .file-btn:hover, .file-btn:focus {
+      background: #005fcc;
+      color: #fff;
+      outline: 3px solid #ffb300;
+      outline-offset: 2px;
+    }
+    #file-list {
+      list-style: none;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      min-height: 0;
+    }
+    #file-list li {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+      background: #e8eaf6;
+      border-radius: 4px;
+      padding: 0.2rem 0.5rem;
+      font-size: 0.9rem;
+    }
+    #file-list li button {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 1rem;
+      line-height: 1;
+      color: #555;
+      padding: 0;
+    }
+    #file-list li button:hover, #file-list li button:focus {
+      color: #c00;
+      outline: 2px solid #ffb300;
+    }
+    .user-message .attachments {
+      font-size: 0.85rem;
+      margin-top: 0.3rem;
+      color: #1557b0;
+    }
+
     /* ---- Footer ---- */
     footer {
       text-align: center;
@@ -244,7 +295,19 @@
       ></textarea>
       <div class="form-actions">
         <button type="submit" class="btn-primary" id="btn-send">Invia (Invio)</button>
+        <button type="button" class="file-btn" id="btn-attach" aria-label="Allega file">📎 Allega file</button>
+        <input
+          type="file"
+          id="file-input"
+          name="files"
+          multiple
+          accept="image/*,.pdf,.txt,.csv,.xls,.xlsx,.doc,.docx,audio/*,video/*"
+          style="display:none"
+          aria-hidden="true"
+          tabindex="-1"
+        />
       </div>
+      <ul id="file-list" aria-label="File allegati" aria-live="polite"></ul>
     </form>
 
   </main>
@@ -260,6 +323,7 @@
       // --- State ---
       const history = []; // [{role: "user"|"model", parts: string}]
       let busy = false;
+      let pendingFiles = []; // File objects selected by the user
 
       // --- DOM refs ---
       const form = document.getElementById("chat-form");
@@ -269,6 +333,9 @@
       const statusEl = document.getElementById("status");
       const btnNewChat = document.getElementById("btn-new-chat");
       const btnCopyLast = document.getElementById("btn-copy-last");
+      const btnAttach = document.getElementById("btn-attach");
+      const fileInput = document.getElementById("file-input");
+      const fileList = document.getElementById("file-list");
 
       // --- Helpers ---
 
@@ -280,10 +347,31 @@
         busy = value;
         sendBtn.disabled = value;
         input.disabled = value;
+        btnAttach.disabled = value;
         setStatus(value ? "Attendere… Gemini sta elaborando la risposta." : "");
       }
 
-      function addMessage(role, text) {
+      function renderFileList() {
+        fileList.innerHTML = "";
+        pendingFiles.forEach(function (file) {
+          const li = document.createElement("li");
+          const name = document.createElement("span");
+          name.textContent = file.name;
+          const removeBtn = document.createElement("button");
+          removeBtn.type = "button";
+          removeBtn.textContent = "✕";
+          removeBtn.setAttribute("aria-label", "Rimuovi " + file.name);
+          removeBtn.addEventListener("click", function () {
+            pendingFiles = pendingFiles.filter(function (f) { return f !== file; });
+            renderFileList();
+          });
+          li.appendChild(name);
+          li.appendChild(removeBtn);
+          fileList.appendChild(li);
+        });
+      }
+
+      function addMessage(role, text, attachmentNames) {
         const li = document.createElement("li");
         li.className = role === "user" ? "user-message" : "assistant-message";
 
@@ -296,8 +384,14 @@
         li.appendChild(labelSpan);
         li.appendChild(textNode);
 
+        if (attachmentNames && attachmentNames.length > 0) {
+          const att = document.createElement("div");
+          att.className = "attachments";
+          att.textContent = "📎 " + attachmentNames.join(", ");
+          li.appendChild(att);
+        }
+
         conversation.appendChild(li);
-        // Scroll to the new message
         li.scrollIntoView({ block: "end", behavior: "smooth" });
         return li;
       }
@@ -307,7 +401,6 @@
         history.length = 0;
         setStatus("");
 
-        // Re-add welcome message
         const li = document.createElement("li");
         li.className = "assistant-message";
         li.id = "msg-welcome";
@@ -325,8 +418,6 @@
         const items = conversation.querySelectorAll("li.assistant-message");
         if (!items.length) return "";
         const last = items[items.length - 1];
-        // Return text without the label span
-        const label = last.querySelector(".label");
         const clone = last.cloneNode(true);
         if (clone.querySelector(".label")) {
           clone.querySelector(".label").remove();
@@ -336,19 +427,26 @@
 
       // --- Send message ---
 
-      async function sendMessage(text) {
-        if (busy || !text.trim()) return;
+      async function sendMessage(text, files) {
+        if (busy || (!text.trim() && files.length === 0)) return;
 
         setBusy(true);
 
-        addMessage("user", text);
+        const attachmentNames = files.map(function (f) { return f.name; });
+        addMessage("user", text, attachmentNames);
         history.push({ role: "user", parts: text });
 
         try {
+          const formData = new FormData();
+          formData.append("message", text);
+          formData.append("history", JSON.stringify(history.slice(0, -1)));
+          files.forEach(function (file) {
+            formData.append("files", file);
+          });
+
           const res = await fetch("/api/chat", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ history: history.slice(0, -1), message: text }),
+            body: formData,
           });
 
           const data = await res.json();
@@ -363,7 +461,6 @@
         } catch (err) {
           const errMsg = err.message || "Errore sconosciuto.";
           addMessage("model", "⚠️ " + errMsg);
-          // Remove the last user entry from history since the exchange failed
           history.pop();
           setStatus("Errore: " + errMsg);
         } finally {
@@ -377,16 +474,19 @@
       form.addEventListener("submit", function (e) {
         e.preventDefault();
         const text = input.value;
-        if (!text.trim()) {
-          setStatus("Il messaggio è vuoto. Scrivi qualcosa prima di inviare.");
+        if (!text.trim() && pendingFiles.length === 0) {
+          setStatus("Il messaggio è vuoto. Scrivi qualcosa o allega un file prima di inviare.");
           input.focus();
           return;
         }
+        const filesToSend = pendingFiles.slice();
         input.value = "";
-        sendMessage(text);
+        pendingFiles = [];
+        fileInput.value = "";
+        renderFileList();
+        sendMessage(text, filesToSend);
       });
 
-      // Allow Ctrl+Enter or just Enter (without Shift) to submit from textarea
       input.addEventListener("keydown", function (e) {
         if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
@@ -394,8 +494,28 @@
         }
       });
 
+      btnAttach.addEventListener("click", function () {
+        if (busy) return;
+        fileInput.click();
+      });
+
+      fileInput.addEventListener("change", function () {
+        const newFiles = Array.from(fileInput.files || []);
+        // Enforce the same per-request cap as the server (MAX_FILES = 5)
+        newFiles.forEach(function (file) {
+          if (pendingFiles.length < 5) {
+            pendingFiles.push(file);
+          }
+        });
+        fileInput.value = "";
+        renderFileList();
+      });
+
       btnNewChat.addEventListener("click", function () {
         if (busy) return;
+        pendingFiles = [];
+        fileInput.value = "";
+        renderFileList();
         clearConversation();
         input.focus();
       });
@@ -407,7 +527,6 @@
           return;
         }
 
-        // Clipboard API (richiede HTTPS o localhost)
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(text).then(function () {
             setStatus("Ultima risposta copiata negli appunti.");
@@ -415,9 +534,6 @@
             setStatus("Impossibile copiare: permesso negato.");
           });
         } else {
-          // Fallback per contesti non sicuri (HTTP).
-          // document.execCommand('copy') è deprecato ma rimane l'unica opzione
-          // compatibile fuori da HTTPS/localhost; preferire HTTPS in produzione.
           try {
             const ta = document.createElement("textarea");
             ta.value = text;
