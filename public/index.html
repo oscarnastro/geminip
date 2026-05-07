@@ -406,11 +406,33 @@
           setStatus("Nessuna risposta da copiare.");
           return;
         }
-        navigator.clipboard.writeText(text).then(function () {
-          setStatus("Ultima risposta copiata negli appunti.");
-        }).catch(function () {
-          setStatus("Impossibile copiare: permesso negato.");
-        });
+
+        // Clipboard API (richiede HTTPS o localhost)
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(function () {
+            setStatus("Ultima risposta copiata negli appunti.");
+          }).catch(function () {
+            setStatus("Impossibile copiare: permesso negato.");
+          });
+        } else {
+          // Fallback per contesti non sicuri (HTTP).
+          // document.execCommand('copy') è deprecato ma rimane l'unica opzione
+          // compatibile fuori da HTTPS/localhost; preferire HTTPS in produzione.
+          try {
+            const ta = document.createElement("textarea");
+            ta.value = text;
+            ta.style.position = "absolute";
+            ta.style.left = "-9999px";
+            document.body.appendChild(ta);
+            ta.focus();
+            ta.select();
+            const ok = document.execCommand("copy");
+            document.body.removeChild(ta);
+            setStatus(ok ? "Ultima risposta copiata negli appunti." : "Impossibile copiare.");
+          } catch (e) {
+            setStatus("Impossibile copiare: " + e.message);
+          }
+        }
       });
 
     })();
