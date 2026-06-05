@@ -1,6 +1,8 @@
 require("dotenv").config();
 const express = require("express");
 const multer = require("multer");
+const mammoth = require("mammoth");
+const { PDFParse } = require("pdf-parse");
 const path = require("path");
 
 const app = express();
@@ -10,6 +12,7 @@ const DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions";
 
 const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20 MB per file
 const MAX_FILES = 5;
+const SUPPORTED_TEXT_FILE_EXTENSIONS = new Set([".docx", ".pdf", ".txt", ".csv"]);
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -115,6 +118,86 @@ function buildDeepSeekMessages(history, message) {
   }
 
   return messages;
+}
+
+function buildSupportedFileTypesMessage() {
+  return "Formati supportati: .docx, .pdf, .txt, .csv.";
+}
+
+function getAttachmentLabel(file) {
+  return file?.originalname || "file-sconosciuto";
+}
+
+function getFileExtension(file) {
+  const fileName = file?.originalname || "";
+  return path.extname(fileName).toLowerCase();
+}
+
+function createAttachmentError(message, status = 400) {
+  const err = new Error(message);
+  err.status = status;
+  err.userMessage = message;
+  return err;
+}
+
+async function extractTextFromFile(file) {
+  const extension = getFileExtension(file);
+  const attachmentLabel = getAttachmentLabel(file);
+
+  if (!SUPPORTED_TEXT_FILE_EXTENSIONS.has(extension)) {
+    throw createAttachmentError(
+      `Il file "${attachmentLabel}" non è supportato per l'estrazione testo. ${buildSupportedFileTypesMessage()}`
+    );
+  }
+
+  try {
+    let extractedText = "";
+
+    if (extension === ".docx") {
+      const result = await mammoth.extractRawText({ buffer: file.buffer });
+      extractedText = result?.value || "";
+    } else if (extension === ".pdf") {
+      const parser = new PDFParse({ data: file.buffer });
+      try {
+        const result = await parser.getText();
+        extractedText = result?.text || "";
+      } finally {
+        await parser.destroy();
+      }
+    } else {
+      extractedText = file.buffer.toString("utf8");
+    }
+
+    if (!extractedText.trim()) {
+      throw createAttachmentError(`Il file "${attachmentLabel}" non contiene testo leggibile.`);
+    }
+
+    return {
+      fileName: attachmentLabel,
+      text: extractedText.trim(),
+    };
+  } catch (err) {
+    if (err?.userMessage) {
+      throw err;
+    }
+
+    throw createAttachmentError(`Impossibile leggere il file "${attachmentLabel}". Verifica che sia un file valido.`);
+  }
+}
+
+function buildUserMessageWithAttachments(message, extractedAttachments) {
+  const sections = [];
+  const trimmedMessage = typeof message === "string" ? message.trim() : "";
+
+  if (trimmedMessage) {
+    sections.push(`Messaggio utente:\n${trimmedMessage}`);
+  }
+
+  for (const attachment of extractedAttachments) {
+    sections.push(`Documento allegato: ${attachment.fileName}\nContenuto estratto:\n${attachment.text}`);
+  }
+
+  return sections.join("\n\n");
 }
 
 async function callDeepSeekChat(modelName, messages) {
@@ -227,19 +310,21 @@ app.post("/api/chat", upload.array("files", MAX_FILES), async (req, res) => {
     return res.status(400).json({ error: "Il messaggio non può essere vuoto." });
   }
 
-  if (files.length > 0) {
-    return res
-      .status(400)
-      .json({ error: "Gli allegati non sono ancora supportati nella versione DeepSeek. Invia solo testo." });
-  }
-
   try {
-    const text = await generateResponse({ history, message });
+    let requestMessage = message;
+
+    if (files.length > 0) {
+      const extractedAttachments = await Promise.all(files.map((file) => extractTextFromFile(file)));
+      requestMessage = buildUserMessageWithAttachments(message, extractedAttachments);
+    }
+
+    const text = await generateResponse({ history, message: requestMessage });
     res.json({ response: text });
   } catch (err) {
     console.error("DeepSeek API error:", err.message || err);
     const status = err.status || 500;
-    res.status(status).json({ error: "Errore nella comunicazione con DeepSeek. Riprova." });
+    const clientErrorMessage = err.userMessage || "Errore nella comunicazione con DeepSeek. Riprova.";
+    res.status(status).json({ error: clientErrorMessage });
   }
 });
 
