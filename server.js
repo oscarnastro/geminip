@@ -86,9 +86,20 @@ function normalizeHistory(rawHistory) {
 }
 
 function buildDeepSeekMessages(history, message) {
+  function getTurnContent(turn) {
+    // Support existing frontend history shape ("parts") and DeepSeek-native shape ("content").
+    if (typeof turn?.parts === "string") {
+      return turn.parts;
+    }
+    if (typeof turn?.content === "string") {
+      return turn.content;
+    }
+    return "";
+  }
+
   const messages = history
     .map((turn) => {
-      const content = typeof turn?.parts === "string" ? turn.parts : typeof turn?.content === "string" ? turn.content : "";
+      const content = getTurnContent(turn);
       if (!content.trim()) {
         return null;
       }
@@ -120,7 +131,19 @@ async function callDeepSeekChat(modelName, messages) {
     }),
   });
 
-  const data = await response.json().catch(() => ({}));
+  const rawBody = await response.text();
+  let data = {};
+  if (rawBody) {
+    try {
+      data = JSON.parse(rawBody);
+    } catch (parseErr) {
+      console.error("DeepSeek API parse error:", parseErr.message || parseErr);
+      const err = new Error("Risposta dal server DeepSeek non valida.");
+      err.status = 502;
+      throw err;
+    }
+  }
+
   if (!response.ok) {
     const err = new Error(data?.error?.message || `DeepSeek API request failed with status ${response.status}.`);
     err.status = response.status;
@@ -129,7 +152,10 @@ async function callDeepSeekChat(modelName, messages) {
 
   const text = data?.choices?.[0]?.message?.content;
   if (typeof text !== "string" || !text.trim()) {
-    const err = new Error("Risposta DeepSeek non valida.");
+    const apiMessage = data?.error?.message;
+    const err = new Error(
+      apiMessage ? `Errore DeepSeek: ${apiMessage}` : "Risposta DeepSeek non valida: contenuto mancante o vuoto."
+    );
     err.status = 502;
     throw err;
   }
@@ -218,7 +244,7 @@ app.post("/api/chat", upload.array("files", MAX_FILES), async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`GeminiP (DeepSeek) avviato su http://localhost:${PORT}`);
+  console.log(`DeepSeek proxy avviato su http://localhost:${PORT}`);
 });
 
 // Multer error handler (must be 4-argument middleware)
