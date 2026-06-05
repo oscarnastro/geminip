@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GeminiP – Assistente AI personalizzato per Giusy</title>
+  <title>GeminiP – Assistente AI DeepSeek personalizzato per Giusy</title>
   <style>
     /* ---- Reset & Base ---- */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -253,8 +253,8 @@
   <a class="skip-link" href="#message-input">Vai al campo di testo</a>
 
   <header>
-    <h1>GeminiP – Assistente AI personalizzato per Giusy</h1>
-    <p>Chat accessibile con Google Gemini. Usa Tab per navigare, Invio per inviare.</p>
+    <h1>GeminiP – Assistente AI DeepSeek personalizzato per Giusy</h1>
+    <p>Chat accessibile con DeepSeek. Usa Tab per navigare, Invio per inviare.</p>
   </header>
 
   <main>
@@ -274,7 +274,7 @@
         aria-atomic="false"
       >
         <li class="assistant-message" id="msg-welcome">
-          <span class="label">Gemini</span>
+          <span class="label">DeepSeek</span>
           Ciao! Sono il tuo assistente AI. Come posso aiutarti oggi?
         </li>
       </ul>
@@ -313,7 +313,7 @@
   </main>
 
   <footer>
-    <p>GeminiP – Proxy accessibile per Google Gemini</p>
+    <p>GeminiP – Proxy accessibile per DeepSeek</p>
   </footer>
 
   <script>
@@ -348,7 +348,7 @@
         sendBtn.disabled = value;
         input.disabled = value;
         btnAttach.disabled = value;
-        setStatus(value ? "Attendere… Gemini sta elaborando la risposta." : "");
+        setStatus(value ? "Attendere… DeepSeek sta elaborando la risposta." : "");
       }
 
       function renderFileList() {
@@ -377,7 +377,7 @@
 
         const labelSpan = document.createElement("span");
         labelSpan.className = "label";
-        labelSpan.textContent = role === "user" ? "Tu" : "Gemini";
+        labelSpan.textContent = role === "user" ? "Tu" : "DeepSeek";
 
         const textNode = document.createTextNode(text);
 
@@ -406,7 +406,7 @@
         li.id = "msg-welcome";
         const label = document.createElement("span");
         label.className = "label";
-        label.textContent = "Gemini";
+        label.textContent = "DeepSeek";
         li.appendChild(label);
         li.appendChild(document.createTextNode("Conversazione riavviata. Come posso aiutarti?"));
         conversation.appendChild(li);
