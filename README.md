@@ -11,6 +11,7 @@ A web app that acts as a proxy for DeepSeek, designed to be **fully accessible w
 - "Copy last response" button to copy text to the clipboard
 - "New conversation" button to reset the chat
 - Conversation memory within the session (context sent to DeepSeek)
+- Server-side document text extraction for `.docx`, `.pdf`, `.txt`, and `.csv` attachments
 - Simple deployment with Docker / Docker Compose
 
 ---
@@ -78,7 +79,7 @@ DEEPSEEK_MAX_RETRIES_PER_MODEL=2
 DEEPSEEK_INITIAL_RETRY_DELAY_MS=1000
 ```
 
-> Note: the current DeepSeek integration supports text chat only. File attachments are accepted by the UI but currently return a clear error message.
+> Note: attachments with extension `.docx`, `.pdf`, `.txt`, and `.csv` are parsed server-side and sent to DeepSeek as extracted text in the user message. Other file types return a clear Italian error message.
 
 ### 5. Install dependencies
 
