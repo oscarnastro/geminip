@@ -1,48 +1,19 @@
 require("dotenv").config();
 const express = require("express");
 const multer = require("multer");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
 const path = require("path");
 
 const app = express();
 const PORT = process.env.PORT || 3004;
-const API_KEY = process.env.GEMINI_API_KEY;
+const API_KEY = process.env.DEEPSEEK_API_KEY;
+const DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions";
 
 const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20 MB per file
 const MAX_FILES = 5;
-const ALLOWED_MIME_TYPES = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-  "application/pdf",
-  "text/plain",
-  "text/csv",
-  // Excel
-  "application/vnd.ms-excel",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  // Word
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "audio/mpeg",
-  "audio/wav",
-  "audio/ogg",
-  "video/mp4",
-  "video/webm",
-]);
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_FILE_SIZE_BYTES, files: MAX_FILES },
-  fileFilter(_req, file, cb) {
-    if (ALLOWED_MIME_TYPES.has(file.mimetype)) {
-      cb(null, true);
-    } else {
-      const err = new multer.MulterError("LIMIT_UNEXPECTED_FILE", file.fieldname);
-      err.message = `Tipo di file non supportato: ${file.mimetype}`;
-      cb(err);
-    }
-  },
 });
 
 function parseNonNegativeInteger(value, fallback) {
@@ -50,19 +21,17 @@ function parseNonNegativeInteger(value, fallback) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
-const DEFAULT_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite"];
+const DEFAULT_MODELS = ["deepseek-chat", "deepseek-reasoner"];
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
-const MAX_RETRIES_PER_MODEL = parseNonNegativeInteger(process.env.GEMINI_MAX_RETRIES_PER_MODEL, 2);
+const MAX_RETRIES_PER_MODEL = parseNonNegativeInteger(process.env.DEEPSEEK_MAX_RETRIES_PER_MODEL, 2);
 const MAX_ATTEMPTS_PER_MODEL = MAX_RETRIES_PER_MODEL + 1;
-const INITIAL_RETRY_DELAY_MS = parseNonNegativeInteger(process.env.GEMINI_INITIAL_RETRY_DELAY_MS, 1000);
+const INITIAL_RETRY_DELAY_MS = parseNonNegativeInteger(process.env.DEEPSEEK_INITIAL_RETRY_DELAY_MS, 1000);
 const MAX_RETRY_DELAY_MS = 8000;
 
 if (!API_KEY) {
-  console.error("ERROR: GEMINI_API_KEY is not set. Please configure it in your .env file.");
+  console.error("ERROR: DEEPSEEK_API_KEY is not set. Please configure it in your .env file.");
   process.exit(1);
 }
-
-const genAI = new GoogleGenerativeAI(API_KEY);
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
@@ -72,7 +41,7 @@ function getErrorStatus(err) {
 }
 
 function getModelSequence() {
-  const configuredModel = process.env.GEMINI_MODEL?.trim();
+  const configuredModel = process.env.DEEPSEEK_MODEL?.trim();
   if (!configuredModel) {
     return DEFAULT_MODELS;
   }
@@ -83,7 +52,7 @@ function getModelSequence() {
 function isModelNotFoundError(err) {
   const status = getErrorStatus(err);
   const message = String(err?.message || "").toLowerCase();
-  return status === 404 || (message.includes("not found") && message.includes("models/"));
+  return status === 404 || (message.includes("model") && (message.includes("not found") || message.includes("does not exist")));
 }
 
 function isTransientError(err) {
@@ -107,52 +76,82 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Build Gemini parts for the current user turn.
- * @param {string} message
- * @param {Express.Multer.File[]} files
- * @returns {Array}
- */
-function buildMessageParts(message, files) {
-  const parts = [];
-  if (message && message.trim()) {
-    parts.push({ text: message.trim() });
+function normalizeHistory(rawHistory) {
+  if (!rawHistory) {
+    return [];
   }
-  for (const file of files) {
-    parts.push({
-      inlineData: {
-        mimeType: file.mimetype,
-        data: file.buffer.toString("base64"),
-      },
-    });
-  }
-  return parts;
+
+  const parsedHistory = typeof rawHistory === "string" ? JSON.parse(rawHistory) : rawHistory;
+  return Array.isArray(parsedHistory) ? parsedHistory : [];
 }
 
-async function generateResponse({ history, message, files = [] }) {
+function buildDeepSeekMessages(history, message) {
+  const messages = history
+    .map((turn) => {
+      const content = typeof turn?.parts === "string" ? turn.parts : typeof turn?.content === "string" ? turn.content : "";
+      if (!content.trim()) {
+        return null;
+      }
+      return {
+        role: turn?.role === "model" || turn?.role === "assistant" ? "assistant" : "user",
+        content: content.trim(),
+      };
+    })
+    .filter(Boolean);
+
+  if (message && message.trim()) {
+    messages.push({ role: "user", content: message.trim() });
+  }
+
+  return messages;
+}
+
+async function callDeepSeekChat(modelName, messages) {
+  const response = await fetch(DEEPSEEK_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: "Bearer " + API_KEY,
+    },
+    body: JSON.stringify({
+      model: modelName,
+      messages,
+      stream: false,
+    }),
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const err = new Error(data?.error?.message || `DeepSeek API request failed with status ${response.status}.`);
+    err.status = response.status;
+    throw err;
+  }
+
+  const text = data?.choices?.[0]?.message?.content;
+  if (typeof text !== "string" || !text.trim()) {
+    const err = new Error("Risposta DeepSeek non valida.");
+    err.status = 502;
+    throw err;
+  }
+
+  return text;
+}
+
+async function generateResponse({ history, message }) {
   const modelsToTry = getModelSequence();
+  const messages = buildDeepSeekMessages(history, message);
   let lastError;
 
   for (const modelName of modelsToTry) {
     for (let attempt = 0; attempt < MAX_ATTEMPTS_PER_MODEL; attempt++) {
       try {
-        const model = genAI.getGenerativeModel({ model: modelName });
-        const chat = model.startChat({
-          history: history.map((turn) => ({
-            role: turn.role,
-            parts: [{ text: turn.parts }],
-          })),
-        });
-
-        const messageParts = buildMessageParts(message, files);
-        const result = await chat.sendMessage(messageParts);
-        return result.response.text();
+        return await callDeepSeekChat(modelName, messages);
       } catch (err) {
         lastError = err;
         const status = getErrorStatus(err);
 
         if (isModelNotFoundError(err)) {
-          console.warn(`Gemini model not available: ${modelName}. Trying next fallback model.`);
+          console.warn(`DeepSeek model not available: ${modelName}. Trying next fallback model.`);
           break;
         }
 
@@ -163,7 +162,7 @@ async function generateResponse({ history, message, files = [] }) {
         if (attempt < MAX_RETRIES_PER_MODEL) {
           const delay = Math.min(INITIAL_RETRY_DELAY_MS * Math.pow(2, attempt), MAX_RETRY_DELAY_MS);
           console.warn(
-            `Transient Gemini error (status: ${status || "unknown"}) on model ${modelName}. Retry ${
+            `Transient DeepSeek error (status: ${status || "unknown"}) on model ${modelName}. Retry ${
               attempt + 1
             }/${MAX_RETRIES_PER_MODEL} in ${delay}ms.`
           );
@@ -171,7 +170,7 @@ async function generateResponse({ history, message, files = [] }) {
           continue;
         }
 
-        console.warn(`Transient Gemini error persisted on model ${modelName}. Trying next fallback model.`);
+        console.warn(`Transient DeepSeek error persisted on model ${modelName}. Trying next fallback model.`);
       }
     }
   }
@@ -190,7 +189,7 @@ app.post("/api/chat", upload.array("files", MAX_FILES), async (req, res) => {
   let message = "";
 
   try {
-    history = req.body.history ? JSON.parse(req.body.history) : [];
+    history = normalizeHistory(req.body.history);
   } catch {
     return res.status(400).json({ error: "Campo 'history' non è un JSON valido." });
   }
@@ -202,18 +201,24 @@ app.post("/api/chat", upload.array("files", MAX_FILES), async (req, res) => {
     return res.status(400).json({ error: "Il messaggio non può essere vuoto." });
   }
 
+  if (files.length > 0) {
+    return res
+      .status(400)
+      .json({ error: "Gli allegati non sono ancora supportati nella versione DeepSeek. Invia solo testo." });
+  }
+
   try {
-    const text = await generateResponse({ history, message, files });
+    const text = await generateResponse({ history, message });
     res.json({ response: text });
   } catch (err) {
-    console.error("Gemini API error:", err.message || err);
+    console.error("DeepSeek API error:", err.message || err);
     const status = err.status || 500;
-    res.status(status).json({ error: "Errore nella comunicazione con Gemini. Riprova." });
+    res.status(status).json({ error: "Errore nella comunicazione con DeepSeek. Riprova." });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`GeminiP avviato su http://localhost:${PORT}`);
+  console.log(`GeminiP (DeepSeek) avviato su http://localhost:${PORT}`);
 });
 
 // Multer error handler (must be 4-argument middleware)
