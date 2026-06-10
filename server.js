@@ -82,24 +82,17 @@ app.use((req, res, next) => {
 
 // Basic Auth middleware — protects the whole app
 function timingSafeCompare(a, b) {
-  try {
-    const bufA = Buffer.from(a);
-    const bufB = Buffer.from(b);
-    if (bufA.length !== bufB.length) {
-      // Still perform a dummy comparison to avoid timing leak on length
-      crypto.timingSafeEqual(bufA, bufA);
-      return false;
-    }
-    return crypto.timingSafeEqual(bufA, bufB);
-  } catch {
-    return false;
-  }
+  // Hash both values to fixed-length buffers so the comparison is always
+  // constant-time regardless of input length, preventing length-based timing leaks.
+  const hashA = crypto.createHash("sha256").update(a).digest();
+  const hashB = crypto.createHash("sha256").update(b).digest();
+  return crypto.timingSafeEqual(hashA, hashB);
 }
 
 function basicAuth(req, res, next) {
   const authHeader = req.headers.authorization || "";
   if (!authHeader.startsWith("Basic ")) {
-    res.setHeader("WWW-Authenticate", 'Basic realm="GeminiP"');
+    res.setHeader("WWW-Authenticate", 'Basic realm="GeminiP - Accessible Proxy"');
     return res.status(401).json({ error: "Authentication required." });
   }
 
@@ -111,14 +104,14 @@ function basicAuth(req, res, next) {
     user = colonIdx >= 0 ? decoded.slice(0, colonIdx) : decoded;
     password = colonIdx >= 0 ? decoded.slice(colonIdx + 1) : "";
   } catch {
-    res.setHeader("WWW-Authenticate", 'Basic realm="GeminiP"');
+    res.setHeader("WWW-Authenticate", 'Basic realm="GeminiP - Accessible Proxy"');
     return res.status(401).json({ error: "Invalid credentials." });
   }
 
   const userOk = timingSafeCompare(user, BASIC_AUTH_USER);
   const passOk = timingSafeCompare(password, BASIC_AUTH_PASSWORD);
   if (!userOk || !passOk) {
-    res.setHeader("WWW-Authenticate", 'Basic realm="GeminiP"');
+    res.setHeader("WWW-Authenticate", 'Basic realm="GeminiP - Accessible Proxy"');
     return res.status(401).json({ error: "Invalid credentials." });
   }
 
