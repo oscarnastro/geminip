@@ -8,6 +8,11 @@ const { PDFParse } = require("pdf-parse");
 const path = require("path");
 
 const app = express();
+
+// Trust the first reverse-proxy hop so req.ip and X-Forwarded-For are correct.
+// Must be set before any middleware so every subsequent handler sees the right IP.
+app.set("trust proxy", 1);
+
 const PORT = process.env.PORT || 3004;
 const API_KEY = process.env.DEEPSEEK_API_KEY;
 const DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions";
@@ -55,9 +60,6 @@ if (!BASIC_AUTH_USER || !BASIC_AUTH_PASSWORD) {
   process.exit(1);
 }
 
-// Trust the first reverse-proxy hop so req.ip and X-Forwarded-For are correct
-app.set("trust proxy", 1);
-
 // Request logging middleware
 app.use((req, res, next) => {
   const start = Date.now();
@@ -80,14 +82,19 @@ app.use((req, res, next) => {
   next();
 });
 
-// Basic Auth middleware — protects the whole app
-function timingSafeCompare(a, b) {
-  // Hash both values to fixed-length buffers so the comparison is always
-  // constant-time regardless of input length, preventing length-based timing leaks.
-  const hashA = crypto.createHash("sha256").update(a).digest();
-  const hashB = crypto.createHash("sha256").update(b).digest();
-  return crypto.timingSafeEqual(hashA, hashB);
+// Basic Auth middleware — protects the whole app.
+// Timing-safe comparison: both inputs are converted to fixed-length HMAC-SHA256
+// digests with a per-process random key, so timingSafeEqual always receives
+// same-length buffers and no timing information leaks based on input length.
+const HMAC_KEY = crypto.randomBytes(32);
+
+function credentialDigest(value) {
+  return crypto.createHmac("sha256", HMAC_KEY).update(value, "utf8").digest();
 }
+
+// Pre-compute expected digests once at startup (avoids recomputing on every request)
+const EXPECTED_USER_DIGEST = credentialDigest(BASIC_AUTH_USER);
+const EXPECTED_PASS_DIGEST = credentialDigest(BASIC_AUTH_PASSWORD);
 
 function basicAuth(req, res, next) {
   const authHeader = req.headers.authorization || "";
@@ -96,20 +103,25 @@ function basicAuth(req, res, next) {
     return res.status(401).json({ error: "Authentication required." });
   }
 
-  let user = "";
-  let password = "";
+  let submittedUser = "";
+  let submittedPass = "";
   try {
     const decoded = Buffer.from(authHeader.slice(6), "base64").toString("utf8");
     const colonIdx = decoded.indexOf(":");
-    user = colonIdx >= 0 ? decoded.slice(0, colonIdx) : decoded;
-    password = colonIdx >= 0 ? decoded.slice(colonIdx + 1) : "";
+    if (colonIdx < 0) {
+      // Malformed credentials: colon separator is required by RFC 7617
+      res.setHeader("WWW-Authenticate", 'Basic realm="GeminiP - Accessible Proxy"');
+      return res.status(401).json({ error: "Invalid credentials." });
+    }
+    submittedUser = decoded.slice(0, colonIdx);
+    submittedPass = decoded.slice(colonIdx + 1);
   } catch {
     res.setHeader("WWW-Authenticate", 'Basic realm="GeminiP - Accessible Proxy"');
     return res.status(401).json({ error: "Invalid credentials." });
   }
 
-  const userOk = timingSafeCompare(user, BASIC_AUTH_USER);
-  const passOk = timingSafeCompare(password, BASIC_AUTH_PASSWORD);
+  const userOk = crypto.timingSafeEqual(credentialDigest(submittedUser), EXPECTED_USER_DIGEST);
+  const passOk = crypto.timingSafeEqual(credentialDigest(submittedPass), EXPECTED_PASS_DIGEST);
   if (!userOk || !passOk) {
     res.setHeader("WWW-Authenticate", 'Basic realm="GeminiP - Accessible Proxy"');
     return res.status(401).json({ error: "Invalid credentials." });
