@@ -1,11 +1,18 @@
 require("dotenv").config();
+const crypto = require("crypto");
 const express = require("express");
+const rateLimit = require("express-rate-limit");
 const multer = require("multer");
 const mammoth = require("mammoth");
 const { PDFParse } = require("pdf-parse");
 const path = require("path");
 
 const app = express();
+
+// Trust the first reverse-proxy hop so req.ip and X-Forwarded-For are correct.
+// Must be set before any middleware so every subsequent handler sees the right IP.
+app.set("trust proxy", 1);
+
 const PORT = process.env.PORT || 3004;
 const API_KEY = process.env.DEEPSEEK_API_KEY;
 const DEEPSEEK_API_URL = "https://api.deepseek.com/chat/completions";
@@ -31,10 +38,126 @@ const MAX_ATTEMPTS_PER_MODEL = MAX_RETRIES_PER_MODEL + 1;
 const INITIAL_RETRY_DELAY_MS = parseNonNegativeInteger(process.env.DEEPSEEK_INITIAL_RETRY_DELAY_MS, 1000);
 const MAX_RETRY_DELAY_MS = 8000;
 
+// Basic Auth credentials — required at startup
+const BASIC_AUTH_USER = process.env.BASIC_AUTH_USER;
+const BASIC_AUTH_PASSWORD = process.env.BASIC_AUTH_PASSWORD;
+
+// Rate limit configuration
+const RATE_LIMIT_WINDOW_MS = parseNonNegativeInteger(process.env.RATE_LIMIT_WINDOW_MS, 60_000);
+const RATE_LIMIT_MAX = parseNonNegativeInteger(process.env.RATE_LIMIT_MAX, 200);
+const CHAT_RATE_LIMIT_MAX = parseNonNegativeInteger(process.env.CHAT_RATE_LIMIT_MAX, 10);
+
 if (!API_KEY) {
   console.error("ERROR: DEEPSEEK_API_KEY is not set. Please configure it in your .env file.");
   process.exit(1);
 }
+
+if (!BASIC_AUTH_USER || !BASIC_AUTH_PASSWORD) {
+  console.error(
+    "ERROR: BASIC_AUTH_USER and BASIC_AUTH_PASSWORD must both be set. " +
+      "The app will not start unprotected. Please configure them in your .env file."
+  );
+  process.exit(1);
+}
+
+// Request logging middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    console.log(
+      JSON.stringify({
+        timestamp: new Date().toISOString(),
+        ip: req.ip,
+        method: req.method,
+        path: req.path,
+        status: res.statusCode,
+        responseTime: `${Date.now() - start}ms`,
+        userAgent: req.headers["user-agent"] || "",
+        forwardedFor: req.headers["x-forwarded-for"] || "",
+        origin: req.headers["origin"] || "",
+        referer: req.headers["referer"] || "",
+      })
+    );
+  });
+  next();
+});
+
+// Basic Auth middleware — protects the whole app.
+// Credential buffers are pre-allocated at startup for constant-time comparison.
+const AUTH_USER_BUF = Buffer.from(BASIC_AUTH_USER, "utf8");
+const AUTH_PASS_BUF = Buffer.from(BASIC_AUTH_PASSWORD, "utf8");
+
+// Timing-safe string comparison: compares same-length buffers with timingSafeEqual.
+// When lengths differ a dummy comparison is performed so the function takes a
+// similar amount of time, then false is returned.
+function timingSafeStringEqual(incoming, expectedBuf) {
+  const buf = Buffer.from(incoming, "utf8");
+  if (buf.length !== expectedBuf.length) {
+    crypto.timingSafeEqual(expectedBuf, expectedBuf); // constant-time dummy
+    return false;
+  }
+  return crypto.timingSafeEqual(buf, expectedBuf);
+}
+
+function basicAuth(req, res, next) {
+  const authHeader = req.headers.authorization || "";
+  if (!authHeader.startsWith("Basic ")) {
+    res.setHeader("WWW-Authenticate", 'Basic realm="GeminiP - Accessible Proxy"');
+    return res.status(401).json({ error: "Authentication required." });
+  }
+
+  let submittedUser = "";
+  let submittedPass = "";
+  try {
+    const decoded = Buffer.from(authHeader.slice(6), "base64").toString("utf8");
+    const colonIdx = decoded.indexOf(":");
+    if (colonIdx < 0) {
+      // Malformed credentials: colon separator is required by RFC 7617
+      res.setHeader("WWW-Authenticate", 'Basic realm="GeminiP - Accessible Proxy"');
+      return res.status(401).json({ error: "Invalid credentials." });
+    }
+    submittedUser = decoded.slice(0, colonIdx);
+    submittedPass = decoded.slice(colonIdx + 1);
+  } catch {
+    res.setHeader("WWW-Authenticate", 'Basic realm="GeminiP - Accessible Proxy"');
+    return res.status(401).json({ error: "Invalid credentials." });
+  }
+
+  // Both comparisons always run (no short-circuit) to avoid timing side-channels
+  const userOk = timingSafeStringEqual(submittedUser, AUTH_USER_BUF);
+  const passOk = timingSafeStringEqual(submittedPass, AUTH_PASS_BUF);
+  if (!userOk || !passOk) {
+    res.setHeader("WWW-Authenticate", 'Basic realm="GeminiP - Accessible Proxy"');
+    return res.status(401).json({ error: "Invalid credentials." });
+  }
+
+  next();
+}
+
+app.use(basicAuth);
+
+// General rate limiter (all routes)
+const generalLimiter = rateLimit({
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  max: RATE_LIMIT_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => {
+    res.status(429).json({ error: "Too many requests. Please try again later." });
+  },
+});
+app.use(generalLimiter);
+
+// Stricter rate limiter applied only to POST /api/chat
+const chatLimiter = rateLimit({
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  max: CHAT_RATE_LIMIT_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => {
+    res.status(429).json({ error: "Too many chat requests. Please slow down and try again later." });
+  },
+});
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
@@ -292,7 +415,7 @@ async function generateResponse({ history, message }) {
 // Fields: history (JSON string), message (string)
 // Files:  files[] (optional, up to MAX_FILES)
 // Returns: { response: string }
-app.post("/api/chat", upload.array("files", MAX_FILES), async (req, res) => {
+app.post("/api/chat", chatLimiter, upload.array("files", MAX_FILES), async (req, res) => {
   // Support both multipart (req.body from multer) and plain JSON bodies
   let history = [];
   let message = "";

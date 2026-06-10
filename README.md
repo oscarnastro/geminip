@@ -81,6 +81,34 @@ DEEPSEEK_INITIAL_RETRY_DELAY_MS=1000
 
 > Note: attachments with extension `.docx`, `.pdf`, `.txt`, and `.csv` are parsed server-side and sent to DeepSeek as extracted text in the user message. Other file types return a clear Italian error message.
 
+#### Access credentials (required)
+
+The app requires HTTP Basic Authentication. Set your credentials before starting:
+
+```
+BASIC_AUTH_USER=your_username
+BASIC_AUTH_PASSWORD=your_strong_password
+```
+
+**If either variable is missing, the server will refuse to start** with a clear error message, so the app is never accidentally left unprotected.
+
+The browser will prompt for credentials via the standard HTTP Basic Auth dialog. All routes — including the static frontend — are protected.
+
+#### Rate limiting (optional)
+
+A general rate limiter and a stricter one for `/api/chat` are enabled by default. You can tune them via `.env`:
+
+```
+# Time window in milliseconds (default: 60000 = 1 minute)
+RATE_LIMIT_WINDOW_MS=60000
+# Max requests per IP per window for all routes (default: 200)
+RATE_LIMIT_MAX=200
+# Max POST /api/chat requests per IP per window (default: 10)
+CHAT_RATE_LIMIT_MAX=10
+```
+
+When a rate limit is exceeded, the server returns HTTP 429 with a JSON error body.
+
 ### 5. Install dependencies
 
 ```bash
@@ -158,3 +186,6 @@ geminip/
 
 - The API key is never exposed to the browser; all calls to DeepSeek happen server-side
 - The app does not store messages on disk
+- **HTTP Basic Authentication** protects the entire app (frontend + API). The server refuses to start if `BASIC_AUTH_USER` or `BASIC_AUTH_PASSWORD` are not set
+- **Rate limiting** prevents abuse: a general limit (default 200 req/min/IP) and a stricter chat limit (default 10 req/min/IP on `POST /api/chat`) are applied automatically
+- **Request logging** records timestamp, client IP, method, path, status, response time, user-agent, and proxy headers for each request. Logging is proxy-aware (`trust proxy` enabled)
