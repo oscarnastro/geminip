@@ -126,8 +126,7 @@ function basicAuth(req, res, next) {
   // Both comparisons always run (no short-circuit) to avoid timing side-channels
   const userOk = timingSafeStringEqual(submittedUser, AUTH_USER_BUF);
   const passOk = timingSafeStringEqual(submittedPass, AUTH_PASS_BUF);
-  // eslint-disable-next-line no-bitwise
-  if (!(userOk & passOk)) {
+  if (!userOk || !passOk) {
     res.setHeader("WWW-Authenticate", 'Basic realm="GeminiP - Accessible Proxy"');
     return res.status(401).json({ error: "Invalid credentials." });
   }
