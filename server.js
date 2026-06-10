@@ -83,18 +83,21 @@ app.use((req, res, next) => {
 });
 
 // Basic Auth middleware — protects the whole app.
-// Timing-safe comparison: both inputs are converted to fixed-length HMAC-SHA256
-// digests with a per-process random key, so timingSafeEqual always receives
-// same-length buffers and no timing information leaks based on input length.
-const HMAC_KEY = crypto.randomBytes(32);
+// Credential buffers are pre-allocated at startup for constant-time comparison.
+const AUTH_USER_BUF = Buffer.from(BASIC_AUTH_USER, "utf8");
+const AUTH_PASS_BUF = Buffer.from(BASIC_AUTH_PASSWORD, "utf8");
 
-function credentialDigest(value) {
-  return crypto.createHmac("sha256", HMAC_KEY).update(value, "utf8").digest();
+// Timing-safe string comparison: compares same-length buffers with timingSafeEqual.
+// When lengths differ a dummy comparison is performed so the function takes a
+// similar amount of time, then false is returned.
+function timingSafeStringEqual(incoming, expectedBuf) {
+  const buf = Buffer.from(incoming, "utf8");
+  if (buf.length !== expectedBuf.length) {
+    crypto.timingSafeEqual(expectedBuf, expectedBuf); // constant-time dummy
+    return false;
+  }
+  return crypto.timingSafeEqual(buf, expectedBuf);
 }
-
-// Pre-compute expected digests once at startup (avoids recomputing on every request)
-const EXPECTED_USER_DIGEST = credentialDigest(BASIC_AUTH_USER);
-const EXPECTED_PASS_DIGEST = credentialDigest(BASIC_AUTH_PASSWORD);
 
 function basicAuth(req, res, next) {
   const authHeader = req.headers.authorization || "";
@@ -120,9 +123,11 @@ function basicAuth(req, res, next) {
     return res.status(401).json({ error: "Invalid credentials." });
   }
 
-  const userOk = crypto.timingSafeEqual(credentialDigest(submittedUser), EXPECTED_USER_DIGEST);
-  const passOk = crypto.timingSafeEqual(credentialDigest(submittedPass), EXPECTED_PASS_DIGEST);
-  if (!userOk || !passOk) {
+  // Both comparisons always run (no short-circuit) to avoid timing side-channels
+  const userOk = timingSafeStringEqual(submittedUser, AUTH_USER_BUF);
+  const passOk = timingSafeStringEqual(submittedPass, AUTH_PASS_BUF);
+  // eslint-disable-next-line no-bitwise
+  if (!(userOk & passOk)) {
     res.setHeader("WWW-Authenticate", 'Basic realm="GeminiP - Accessible Proxy"');
     return res.status(401).json({ error: "Invalid credentials." });
   }
