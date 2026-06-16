@@ -455,7 +455,8 @@
           if (rawBody) {
             try {
               data = JSON.parse(rawBody);
-            } catch {
+            } catch (parseError) {
+              console.warn("Risposta non JSON ricevuta da /api/chat:", parseError);
               data = null;
             }
           }
