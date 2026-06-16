@@ -464,16 +464,17 @@
             const errorMessage =
               data && typeof data.error === "string"
                 ? data.error
-                : "Errore del server (HTTP " + res.status + ").";
+                : `Errore del server (HTTP ${res.status}).`;
             throw new Error(errorMessage);
           }
 
-          if (!data || typeof data.response !== "string" || !data.response.trim()) {
+          const responseText = data && typeof data.response === "string" ? data.response : "";
+          if (!responseText.trim()) {
             throw new Error("Risposta non valida dal server.");
           }
 
-          addMessage("model", data.response);
-          history.push({ role: "model", parts: data.response });
+          addMessage("model", responseText);
+          history.push({ role: "model", parts: responseText });
           setStatus("Risposta ricevuta.");
         } catch (err) {
           const errMsg = err.message || "Errore sconosciuto.";
