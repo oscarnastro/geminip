@@ -449,14 +449,33 @@
             body: formData,
           });
 
-          const data = await res.json();
+          const rawBody = await res.text();
+          let data = null;
 
-          if (!res.ok) {
-            throw new Error(data.error || "Errore del server.");
+          if (rawBody) {
+            try {
+              data = JSON.parse(rawBody);
+            } catch (parseError) {
+              console.warn("Risposta non JSON ricevuta da /api/chat:", parseError);
+              data = null;
+            }
           }
 
-          addMessage("model", data.response);
-          history.push({ role: "model", parts: data.response });
+          if (!res.ok) {
+            const errorMessage =
+              data && typeof data.error === "string"
+                ? data.error
+                : `Errore del server (HTTP ${res.status}).`;
+            throw new Error(errorMessage);
+          }
+
+          const responseText = data && typeof data.response === "string" ? data.response : "";
+          if (!responseText.trim()) {
+            throw new Error("Risposta non valida dal server.");
+          }
+
+          addMessage("model", responseText);
+          history.push({ role: "model", parts: responseText });
           setStatus("Risposta ricevuta.");
         } catch (err) {
           const errMsg = err.message || "Errore sconosciuto.";
