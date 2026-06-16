@@ -37,6 +37,7 @@ const MAX_RETRIES_PER_MODEL = parseNonNegativeInteger(process.env.DEEPSEEK_MAX_R
 const MAX_ATTEMPTS_PER_MODEL = MAX_RETRIES_PER_MODEL + 1;
 const INITIAL_RETRY_DELAY_MS = parseNonNegativeInteger(process.env.DEEPSEEK_INITIAL_RETRY_DELAY_MS, 1000);
 const MAX_RETRY_DELAY_MS = 8000;
+const DEEPSEEK_REQUEST_TIMEOUT_MS = parseNonNegativeInteger(process.env.DEEPSEEK_REQUEST_TIMEOUT_MS, 25000);
 
 // Basic Auth credentials — required at startup
 const BASIC_AUTH_USER = process.env.BASIC_AUTH_USER;
@@ -185,6 +186,10 @@ function isTransientError(err) {
   const status = getErrorStatus(err);
   const message = String(err?.message || "").toLowerCase();
 
+  if (err?.name === "AbortError" || err?.name === "TimeoutError") {
+    return true;
+  }
+
   if (RETRYABLE_STATUS_CODES.has(status)) {
     return true;
   }
@@ -324,49 +329,57 @@ function buildUserMessageWithAttachments(message, extractedAttachments) {
 }
 
 async function callDeepSeekChat(modelName, messages) {
-  const response = await fetch(DEEPSEEK_API_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: "Bearer " + API_KEY,
-    },
-    body: JSON.stringify({
-      model: modelName,
-      messages,
-      stream: false,
-    }),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), DEEPSEEK_REQUEST_TIMEOUT_MS);
 
-  const rawBody = await response.text();
-  let data = {};
-  if (rawBody) {
-    try {
-      data = JSON.parse(rawBody);
-    } catch (parseErr) {
-      console.error("DeepSeek API parse error:", parseErr.message || parseErr);
-      const err = new Error("Risposta dal server DeepSeek non valida.");
+  try {
+    const response = await fetch(DEEPSEEK_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + API_KEY,
+      },
+      body: JSON.stringify({
+        model: modelName,
+        messages,
+        stream: false,
+      }),
+      signal: controller.signal,
+    });
+
+    const rawBody = await response.text();
+    let data = {};
+    if (rawBody) {
+      try {
+        data = JSON.parse(rawBody);
+      } catch (parseErr) {
+        console.error("DeepSeek API parse error:", parseErr.message || parseErr);
+        const err = new Error("Risposta dal server DeepSeek non valida.");
+        err.status = 502;
+        throw err;
+      }
+    }
+
+    if (!response.ok) {
+      const err = new Error(data?.error?.message || `DeepSeek API request failed with status ${response.status}.`);
+      err.status = response.status;
+      throw err;
+    }
+
+    const text = data?.choices?.[0]?.message?.content;
+    if (typeof text !== "string" || !text.trim()) {
+      const apiMessage = data?.error?.message;
+      const err = new Error(
+        apiMessage ? `Errore DeepSeek: ${apiMessage}` : "Risposta DeepSeek non valida: contenuto mancante o vuoto."
+      );
       err.status = 502;
       throw err;
     }
-  }
 
-  if (!response.ok) {
-    const err = new Error(data?.error?.message || `DeepSeek API request failed with status ${response.status}.`);
-    err.status = response.status;
-    throw err;
+    return text;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  const text = data?.choices?.[0]?.message?.content;
-  if (typeof text !== "string" || !text.trim()) {
-    const apiMessage = data?.error?.message;
-    const err = new Error(
-      apiMessage ? `Errore DeepSeek: ${apiMessage}` : "Risposta DeepSeek non valida: contenuto mancante o vuoto."
-    );
-    err.status = 502;
-    throw err;
-  }
-
-  return text;
 }
 
 async function generateResponse({ history, message }) {
