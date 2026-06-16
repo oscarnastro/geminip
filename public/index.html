@@ -449,10 +449,27 @@
             body: formData,
           });
 
-          const data = await res.json();
+          const rawBody = await res.text();
+          let data = null;
+
+          if (rawBody) {
+            try {
+              data = JSON.parse(rawBody);
+            } catch {
+              data = null;
+            }
+          }
 
           if (!res.ok) {
-            throw new Error(data.error || "Errore del server.");
+            const errorMessage =
+              data && typeof data.error === "string"
+                ? data.error
+                : "Errore del server (HTTP " + res.status + ").";
+            throw new Error(errorMessage);
+          }
+
+          if (!data || typeof data.response !== "string" || !data.response.trim()) {
+            throw new Error("Risposta non valida dal server.");
           }
 
           addMessage("model", data.response);
